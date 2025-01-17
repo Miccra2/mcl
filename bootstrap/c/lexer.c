@@ -1,167 +1,188 @@
 #ifndef __LEXER_C__
 #define __LEXER_C__
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-
+#include "utils.c"
 #include "token.c"
-#include "dynamic_array.c"
 
-#define ISDIGIT(x) ((x)>='0' && (x)<='9')
-#define ISNUMBER(x) ((x)=='.' || ISDIGIT(x))
-#define ISLABELSTART(x) ((x)=='_' || ((x)>='A' && (x)<='Z') || ((x)>='a' && (x)<='z'))
-#define ISLABEL(x) (ISLABELSTART(x) || ISDIGIT(x))
-
-Lexer *new_lexer(char *path);
-void del_lexer(Lexer **lexer);
-void lexer_next(Lexer *lexer);
-void lexer_davance(Lexer *lexer);
-Token *lexer_next_token(Lexer *lexer);
-void del_token(Token **token);
-DynamicArray *lex_file(char *path);
+#define error(msg, pos, ...) if (pos.line == 0 && pos.column == 0) { \
+        fprintf(stderr, "ERROR: "msg"\n", ##__VA_ARGS__); } else { \
+        fprintf(stderr, "ERROR:l%u:c%u: "msg"\n", \
+                pos.line, pos.column, ##__VA_ARGS__); } \
+        exit(1);
+#define waring(msg, pos, ...) if (pos.line == 0 && pos.column == 0) { \
+        fprintf(stderr, "WARING: "msg"\n", ##__VA_ARGS__); } else { \
+        fprintf(stderr, "WARING:l%u:c%u: "msg, \
+                pos.line, pos.column, ##__VA_ARGS__); }
+#define info(msg, pos, ...) if (pos.line == 0 && pos.column == 0) { \
+        fprintf(stderr, "INFO: "msg"\n", ##__VA_ARGS__); } else { \
+        fprintf(stderr, "INFO:l%u:c%u: "msg"\n", \
+                pos.line, pos.column, ##__VA_ARGS__); }
 
 typedef struct {
-    uint64_t path_length;
-    char *path;
-    uint64_t text_length;
-    char *text;
+    usize    path_length;
+    cString  path;
+    usize    text_length;
+    cString  text;
     Position pos;
 
-    uint64_t char_index;
-    char curr_char;
-    char next_char;
-} Lexer;
+    usize    char_index;
+    uchar    curr_char;
+    uchar    next_char;
+} Lexer, *pLexer;
 
-Lexer *new_lexer(char *path) {
-    FILE *pFile = fopen(path, "r");
+#define inrange(x) ((x)->char_index < (x)->text_length)
+#define iswhitespace(x) ((x)->curr_char==' ' || (x)->curr_char=='\n' \
+        || (x)->curr_char=='\r' || (x)->curr_char=='\t')
+#define islinecomment(x) ((x)->curr_char=='/' && (x)->next_char=='/')
+#define isblockcomment(x) ((x)->curr_char=='/' && (x)->next_char=='*')
+
+#define isdigit(x) ((x)->curr_char >= '0' && (x)->curr_char <= '9')
+#define isnumber(x) ((x)->curr_char == '.' || isdigit(x))
+#define isalpha(x) (((x)->curr_char >= 'A' && (x)->curr_char <= 'Z') \
+        || ((x)->curr_char >= 'a' && (x)->curr_char <= 'z'))
+#define islabelstart(x) ((x)->curr_char == '_' || isalpha(x))
+#define islabel(x) (islabelstart(x) || isdigit(x))
+
+pLexer new_lexer(uchar *path);
+void del_lexer(pLexer *lexer);
+void lexer_next(pLexer lexer);
+void lexer_advance(pLexer lexer);
+Token lexer_next_token(pLexer lexer);
+Tokens *tokenise(pLexer lexer);
+
+pLexer new_lexer(cString path) {
+    FILE *pFile;
+    pLexer lexer;
+    
+    pFile = fopen(path, "r");
     if (!pFile) {
-        fprintf(stderr, "ERROR: Could not open file `%s`!\n", path);
+        error("Could not open file `%s`, please provide a valid file path!", 
+                empty_pos, path);
         return NULL;
     }
-    fseed(pFile, 0, SEEK_END);
-    uint64_t size = ftell(pFile);
-    char *buffer = malloc(size);
-    rewind(pFile);
-    fread(buffer, 1, size, pFile);
-    fclose(pFile);
-
-    Lexer *lexer = malloc(sizeof(Lexer));
-    lexer->path_length = strlen(path);
+    
+    lexer = malloc(sizeof(Lexer));
+    
+    lexer->path_length = cstr_len(path);
     lexer->path = path;
-    lexer->text_length = size;
-    lexer->text = buffer;
-    lexer->pos = new_pos(1, 1, 0, 0);           // line=1, column=1, line_off=0, offset=0
+    lexer->text_length = flen(pFile);
+    printf("lexer->text_length: %i\n", lexer->text_length);
+    lexer->text = malloc(sizeof(lexer->text_length));
+    printf("lexer->text: 0x%.16X\n", lexer->text);
+    lexer->pos = new_pos(1, 1, 0, 0);
     lexer->char_index = 0;
     lexer->curr_char = 0;
     lexer->next_char = 0;
+    
+    fread(&lexer->text, 1, lexer->text_length, pFile);
+
     lexer_next(lexer);
     lexer_next(lexer);
+
+    fclose(pFile);
     return lexer;
 }
 
-void del_lexer(Lexer **lexer) {
+void del_lexer(pLexer *lexer) {
     free((*lexer)->text);
     free(*lexer);
     *lexer = NULL;
 }
 
-void lexer_next(Lexer *lexer) {
+void lexer_next(pLexer lexer) {
     lexer->curr_char = lexer->next_char;
-    if (lexer->char_index < lexer->text_length) {
-        lexer->next_char = lexer->text[lexer->char_index];
-    } else {
-        lexer->next_char = 0;
-    }
+    lexer->next_char = lexer->char_index < lexer->text_length ? 
+        lexer->text[lexer->char_index] : 0;
     lexer->char_index++;
 }
 
-void lexer_advance(Lexer *lexer) {
+void lexer_advance(pLexer lexer) {
     if (lexer->curr_char == '\n') {
         lexer->pos.line++;
         lexer->pos.column = 0;
-        lexer->pos.line_off = lexer->pos.offset+1;
+        lexer->pos.line_off = lexer->pos.offset + 1;
     }
     lexer->pos.column++;
     lexer->pos.offset++;
     lexer_next(lexer);
 }
 
-DynamicArray *lex_file(char *path) {
-    Lexer *lexer = new_lexer(path);
-    DynamicArray *tokens = new_dynamic_array();
-    while (lexer->char_index < lexer->text_length) {
-        Token token = lexer_next_token(lexer);
-        dynamic_array_append(&tokens, &token, sizeof(Token));
-    }
-    return tokens;
-}
+Token lexer_next_token(pLexer lexer) {
+    bool isfloat;
+    Position pos;
 
-Token *lexer_next_token(Lexer *lexer) {
-    while (lexer->char_index < lexer->text_length) {
-        if (lexer->curr_char == ' ' || 
-            lexer->curr_char == '\n' || 
-            lexer->curr_char == '\t') {
+    // skip whitespaces, line comments and block commentes
+    while (inrange(lexer)) {
+        if (iswhitespace(lexer)) {
+            // skip whitespaces aka: ` `, `\n`, `\r` and `\t`
             lexer_advance(lexer);
-        } else if (lexer->curr_char == '/' && lexer->next_char == '/') {
-            while (lexer->char_index < lexer->text_length &&
-                   lexer->curr_char != '\n') {
+        }else if (islinecomment(lexer)) {
+            // skip line comment aka: `//`
+            while (inrange(lexer) && lexer->curr_char != '\n') {
                 lexer_advance(lexer);
             }
-        } else if (lexer->curr_char == '/' && lexer->next_char == '*') {
-            while (lexer->char_index < lexer->text_length && 
-                   lexer->curr_char != '*' && 
-                   lexer->next_char != '/') {
+        } else if (isblockcomment(lexer)) {
+            // skip block comment aka: `/*` and `*/`
+            while (inrange(lexer) && 
+                    lexer->curr_char != '*' && 
+                    lexer->next_char != '/') {
                 lexer_advance(lexer);
             }
+
+            // skip end of block comment `*/` to not get them as tokens
             lexer_advance(lexer);
             lexer_advance(lexer);
         } else {
+            // no whitespace or comment found (break out of loop)
             break;
         }
     }
-    if (lexer->char_index >= lexer->text_length) {
-        return NULL;
+
+    // check if end for lexer->char_index is reached and return empty Token
+    if (!inrange(lexer)) {
+        return new_token(undefined, lexer->pos, lexer->pos);
     }
-    Position pos = lexer->pos;
-    Token *token = malloc(sizeof(Token));
+    
+    // tokenise
+    pos = lexer->pos;
     if (lexer->curr_char == '+') {
         lexer_advance(lexer);
-        token->kind = TokenKind.plus;
-        token->start = pos;
-        token->end = lexer->pos;
-        return token;
-    } else if (ISDIGIT(lexer->curr_char)) {
-        bool isnumber = false;
-        while (lexer->char_index < lexer->text_length && 
-               ISNUMBER(lexer->curr_char)) {
+        return new_token(plus, pos, lexer->pos);
+    } else if (isdigit(lexer)) {
+        while (inrange(lexer) && isnumber(lexer)) {
             if (lexer->curr_char == '.') {
-                isnumber = true;
+                isfloat = true;
             }
             lexer_advance(lexer);
         }
-        if (isnumber) {
-            token->kind = TokenKind.number;
-        } else {
-            token->kind = TokenKind.digit;
+        if (isfloat) {
+            return new_token(number, pos, lexer->pos);
         }
-        token->start = pos;
-        token->end = lexer->pos;
-        return token;
-    } else if (ISLABELSTART(lexer->curr_char)) {
-        while (lexer->char_index < lexer->text_length && 
-               ISLABEL(lexer->curr_char)) {
+        return new_token(digits, pos, lexer->pos);
+    } else if (islabelstart(lexer)) {
+        while (inrange(lexer) && islabel(lexer)) {
             lexer_advance(lexer);
         }
-        token->kind = TokenKind.label;
-        token->start = pos;
-        token->end = lexer->pos;
-        return token;
+        return new_token(label, pos, lexer->pos);
     } else {
-        fprintf(stderr, "ERROR:l%d:c%d: Encountered an invalid token `%c` while parsing!\n", lexer->curr_char);
-        return NULL;
+        error("Encountered an invalid token (%i) `%c` while parsing!",
+                pos, lexer->curr_char, lexer->curr_char);
     }
+}
+
+pTokens tokenise(pLexer lexer) {
+    pTokens tokens;
+    Token token;
+
+    tokens = new_tokens();
+    token = lexer_next_token(lexer);
+    while (inrange(lexer)) {
+        printf("token (tokenise): %i", token.kind);
+        tokens_append(&tokens, token);
+        token = lexer_next_token(lexer);
+    }
+
+    return tokens;
 }
 
 #endif // __LEXER_C__
