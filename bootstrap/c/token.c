@@ -1,80 +1,88 @@
 #ifndef __TOKEN_C__
 #define __TOKEN_C__
 
-#include "utils.c"
+#include <stdio.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include "span.c"
+#include "fmt.c"
 
 typedef enum {
-    undefined,
-    
-    label,
-    digits,
-    number,
-    string,
-
-    plus,
-
-    count,
+    TOKEN_UNDEFINED,
+    TOKEN_DIGITS,
+    TOKEN_PLUS,
+    TOKEN_SEMICOLON,
+    TOKEN_COUNT,
 } TokenKind;
 
-TokenKind token_kind;
-
-typedef struct {
-    usize line;
-    usize column;
-    uchar *line_off;
-    uchar *offset;
-} Position, *pPosition;
+char *TOKEN_KIND[] = {
+    "TOKEN_UNDEFINED",
+    "TOKEN_DIGITS",
+    "TOKEN_PLUS",
+    "TOKEN_SEMICOLON",
+    "TOKEN_COUNT",
+};
 
 typedef struct {
     TokenKind kind;
-    Position  start;
-    Position  end;
-} Token, *pToken;
+    Span      span;
+} Token;
 
 typedef struct {
-    usize capacity;     // in tokens
-    usize count;        // in tokens
-    Token tokens[];
-} Tokens, *pTokens;
+    size_t capacity;
+    size_t count;
+    Token  token[];
+} Tokens;
 
-#ifndef TOKENS_CAPACITY
-#define TOKENS_CAPACITY 8 * 1024    // 8K Tokens
-#endif // TOKENS_CAPACITY
+typedef struct {
+    size_t left;
+    size_t right;
+} Priority;
 
-#define new_pos(l, c, lo, o) ((Position){.line=l, .column=c, \
-        .line_off=lo, .offset=o})
-#define new_token(k, s, e) ((Token){.kind=k, .start=s, .end=e})
-#define empty_pos new_pos(0, 0, 0, 0)
+#ifndef TOKENS_DEFAULT_CAPACITY
+#define TOKENS_DEFAULT_CAPACITY 8 * 1024
+#endif // TOKENS_DEFAULT_CAPACITY
 
-pTokens new_tokens() {
-    pTokens tokens;
+#define new_token(k, s) (Token){.kind=k, .span=s}
+#define new_priority(r, l) (Priority){.right=r, .left=l}
+#define default_token() new_token(TOKEN_UNDEFINED, default_span())
+#define token_len(t) span_len((t)->span)
 
-    tokens = malloc(sizeof(Tokens) + TOKENS_CAPACITY);
-    tokens->capacity = TOKENS_CAPACITY;
+Tokens *new_tokens() {
+    Tokens *tokens;
+    size_t size;
+
+    size = sizeof(Tokens) + sizeof(Token)*TOKENS_DEFAULT_CAPACITY;
+    tokens = (Tokens *)malloc(size);
+    tokens->capacity = TOKENS_DEFAULT_CAPACITY;
     tokens->count = 0;
-    
+
     return tokens;
 }
 
-void del_tokens(pTokens *tokens) {
+void del_tokens(Tokens **tokens) {
     free(*tokens);
     *tokens = NULL;
 }
 
-void tokens_append(pTokens *tokens, Token token) {
-    pTokens ntokens;
-
-    if ((*tokens)->count + 1 > (*tokens)->capacity) {
-        ntokens = malloc(sizeof(Tokens) + (*tokens)->capacity*2);
-        for (usize i = 0; i < (*tokens)->count; i++) {
-            ntokens->tokens[i] = (*tokens)->tokens[i];
-        }
-        free(*tokens);
-        *tokens = ntokens;
+void tokens_append(Tokens *tokens, Token *token) {
+    if (tokens->count > tokens->capacity) {
+        tokens->capacity *= 2;
+        tokens = realloc(tokens, sizeof(Tokens)+tokens->capacity);
     }
+    tokens->token[tokens->count] = *token;
+    tokens->count++;
+}
 
-    (*tokens)->count++;
-    (*tokens)->tokens[(*tokens)->count] = token;
+#define token_make_int(p, t, d) span_make_int((p)->lexer->text, &(t)->span, d)
+
+Priority token_get_priority(TokenKind kind) {
+    switch (kind) {
+    case TOKEN_PLUS:
+        return new_priority(1, 2);
+    default:
+        return new_priority(0, 0);
+    }
 }
 
 #endif // __TOKEN_C__
